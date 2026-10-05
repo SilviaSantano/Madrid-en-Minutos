@@ -1,5 +1,5 @@
 import type { Destination, Point } from '../types/commute'
-import { postTravelTime, type TravelTimeMode } from './traveltime'
+import { postTravelTime, transportationFor, type TravelTimeMode } from './traveltime'
 
 // One polygon: an outer ring plus optional holes (areas inside that are not reachable).
 export type AreaShape = {
@@ -41,7 +41,7 @@ export async function fetchReachableArea(
           coords: destination.location,
           arrival_time: new Date(departure.getTime() + minutes * 60000).toISOString(),
           travel_time: minutes * 60,
-          transportation: { type: mode },
+          transportation: transportationFor(mode),
         })),
         // An intersection needs at least two searches; with one destination its own area is the answer.
         intersections: multiple

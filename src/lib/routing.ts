@@ -1,6 +1,6 @@
 import type { Destination, DestinationCommute, Point, RouteLeg, RoutingErrorCode, TravelModeResult } from '../types/commute'
 import { haversineMeters } from './geo'
-import { travelTimeErrorCode, postTravelTime, type TravelTimeMode } from './traveltime'
+import { travelTimeErrorCode, postTravelTime, transportationFor, type TravelTimeMode } from './traveltime'
 
 type RoutePart = {
   type: string
@@ -82,6 +82,27 @@ function rideLabel(part: RoutePart): string {
   }
 }
 
+// TravelTime is optimistic at both ends of a public transport trip. Calibrated against Google
+// Maps on López Silva 8 → Núñez de Balboa 72 (L5): same 11 min on the train, but Google walks
+// 6 + 4 min where TravelTime walks 4.2 + 3.1, and allows ~6 min from reaching the station to the
+// train leaving where TravelTime allows 30 s. These allowances close most of that gap.
+const walkSlowdown = 0.35 // +35% on walking to and from stops: crossings, traffic lights, entrances
+const stationEntrySeconds = 120 // street to platform: entrance, ticket gates, escalators
+const firstWaitSeconds = 180 // typical wait for the first train or bus (TravelTime assumes none)
+const stationModes = new Set(['rail_underground', 'rail_overground', 'rail_national', 'train', 'tram', 'light_rail'])
+
+function transitAllowanceSeconds(parts: RoutePart[]): number {
+  const rides = parts.filter((part) => part.type === 'public_transport')
+  if (rides.length === 0) return 0
+  const first = parts.indexOf(rides[0])
+  const last = parts.indexOf(rides[rides.length - 1])
+  const endWalks = [...parts.slice(0, first), ...parts.slice(last + 1)]
+  const walkSeconds = endWalks.reduce((sum, part) => sum + part.travel_time, 0)
+  return (
+    walkSeconds * walkSlowdown + firstWaitSeconds + (stationModes.has(rides[0].mode) ? stationEntrySeconds : 0)
+  )
+}
+
 function toResult(
   mode: TravelTimeMode,
   property: { travel_time: number; distance?: number; route?: { parts: RoutePart[] } },
@@ -90,9 +111,11 @@ function toResult(
   const rides = parts.filter((part) => part.type === 'public_transport')
   const distance =
     mode === 'public_transport' ? parts.reduce((sum, part) => sum + partDistance(part), 0) : (property.distance ?? 0)
+  const seconds =
+    mode === 'public_transport' ? Math.round(property.travel_time + transitAllowanceSeconds(parts)) : property.travel_time
   return {
-    durationText: formatSeconds(property.travel_time),
-    durationValueSeconds: property.travel_time,
+    durationText: formatSeconds(seconds),
+    durationValueSeconds: seconds,
     distanceText: distance > 0 ? formatMeters(distance) : '-',
     distanceValueMeters: distance,
     rides: mode === 'public_transport' ? rides.map(rideLabel) : undefined,
@@ -117,7 +140,7 @@ async function requestRoutes(home: Point, destinations: Destination[], departure
       arrival_location_ids: pair.map((destination) => destination.id),
       departure_time: departure.toISOString(),
       properties: mode === 'public_transport' ? ['travel_time', 'route'] : ['travel_time', 'distance', 'route'],
-      transportation: { type: mode },
+      transportation: transportationFor(mode),
     })),
   )
   return postTravelTime<RoutesResponse>('/routes', {

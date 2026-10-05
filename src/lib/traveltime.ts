@@ -9,6 +9,16 @@ const requestTimeoutMs = 30000
 
 export type TravelTimeMode = 'public_transport' | 'driving' | 'walking'
 
+// Extra minutes added at every change between vehicles. TravelTime's default is 0, which
+// assumes you can always step off one train or bus and straight onto the next; in Madrid's
+// larger interchanges that made public transport times consistently too short.
+const transferBufferSeconds = 180
+
+// The `transportation` object for a request, with the transfer buffer for public transport.
+export function transportationFor(mode: TravelTimeMode) {
+  return mode === 'public_transport' ? { type: mode, pt_change_delay: transferBufferSeconds } : { type: mode }
+}
+
 // A failure with a known cause, so the UI can explain it.
 export class TravelTimeError extends Error {
   readonly code: RoutingErrorCode

@@ -11,6 +11,7 @@
     "stops": "node scripts/fetch-stops.mjs"
   },
   "dependencies": {
+    "@fontsource-variable/plus-jakarta-sans": "^5.3.0",
     "@maplibre/maplibre-gl-leaflet": "^0.1.4",
     "leaflet": "^1.9.4",
     "lucide-react": "^1.52.0",
