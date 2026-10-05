@@ -1,18 +1,26 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { AddressSearch, type AddressResult } from './components/AddressSearch'
-import { MadridMap } from './components/MadridMap'
-import { ResultsPanel } from './components/ResultsPanel'
+import { useEffect, useMemo, useRef, useState, type UIEvent } from 'react'
+import { ChevronDown, ChevronUp, Clock, House, MapPin, Plus, X } from 'lucide-react'
+import { I18nContext, initialLang, messages, saveLang, type Lang } from './i18n'
+import { AddressSearch } from './components/AddressSearch'
+import { MadridMap, type SelectedRoute } from './components/MadridMap'
+import { ReachableAreaControl } from './components/ReachableAreaControl'
+import { ResultsTable, type RouteSelection } from './components/ResultsTable'
+import { reverseGeocode, type AddressResult } from './lib/geocoding'
+import { resultFor } from './lib/modes'
 import { calculateCommuteResults } from './lib/routing'
-import { fetchMadridTransitStops } from './lib/stops'
+import { fetchMadridTransitNetwork } from './lib/stops'
+import { madridNow, madridTimeToDate } from './lib/time'
 import { useReachableArea, type AreaSettings } from './lib/useReachableArea'
-import type { ClickMode, Destination, DestinationCommute, Point, TransitStop } from './types/commute'
+import type { Destination, DestinationCommute, Point, TransitNetwork } from './types/commute'
 
-const maxDestinations = 3
+const maxDestinations = 4
 const storageKey = 'madrid-commute-map:v1'
 
 type SavedState = {
   destinations: Destination[]
   home: Point | null
+  // Null when the home was placed by clicking the map.
+  homeLabel?: string | null
 }
 
 function loadSavedState(): SavedState {
@@ -20,51 +28,14 @@ function loadSavedState(): SavedState {
     const raw = localStorage.getItem(storageKey)
     if (raw) {
       const parsed = JSON.parse(raw) as SavedState
-      return { destinations: parsed.destinations ?? [], home: parsed.home ?? null }
+      // Older saves stored the English placeholder; treat it as "placed on the map".
+      const homeLabel = parsed.homeLabel === 'Point on the map' ? null : (parsed.homeLabel ?? null)
+      return { destinations: parsed.destinations ?? [], home: parsed.home ?? null, homeLabel }
     }
   } catch {
     // Storage unavailable or corrupt: start empty.
   }
   return { destinations: [], home: null }
-}
-
-// Default departure: next weekday at 08:30 local time, a typical morning commute.
-function defaultDeparture(): string {
-  const date = new Date()
-  date.setDate(date.getDate() + 1)
-  while (date.getDay() === 0 || date.getDay() === 6) {
-    date.setDate(date.getDate() + 1)
-  }
-  const pad = (value: number) => String(value).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T08:30`
-}
-
-// Interprets a datetime-local value ("2026-10-06T08:30") as Madrid time, whatever the browser's time zone.
-function madridTimeToDate(value: string): Date {
-  const wallClockAsUtc = new Date(`${value}:00Z`)
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat('en-US', {
-      timeZone: 'Europe/Madrid',
-      hourCycle: 'h23',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    })
-      .formatToParts(wallClockAsUtc)
-      .map((part) => [part.type, part.value]),
-  )
-  const madridWallClock = Date.UTC(
-    Number(parts.year),
-    Number(parts.month) - 1,
-    Number(parts.day),
-    Number(parts.hour),
-    Number(parts.minute),
-    Number(parts.second),
-  )
-  return new Date(wallClockAsUtc.getTime() - (madridWallClock - wallClockAsUtc.getTime()))
 }
 
 const initialState = loadSavedState()
@@ -73,35 +44,48 @@ const hasSavedRoute = initialState.home !== null && initialState.destinations.le
 function App() {
   const [destinations, setDestinations] = useState<Destination[]>(initialState.destinations)
   const [home, setHome] = useState<Point | null>(initialState.home)
-  const [departure, setDeparture] = useState(defaultDeparture)
-  const [clickMode, setClickMode] = useState<ClickMode>(
-    initialState.destinations.length === 0 ? 'destination' : 'home',
-  )
+  const [lang, setLang] = useState<Lang>(initialLang)
+  const t = messages[lang]
+  const [homeLabel, setHomeLabel] = useState<string | null>(initialState.homeLabel ?? null)
+  const [departure, setDeparture] = useState(madridNow)
+  // True while the next map click or search result adds a place instead of setting home.
+  const [addingPlace, setAddingPlace] = useState(false)
   const [results, setResults] = useState<DestinationCommute[]>([])
   const [isLoading, setIsLoading] = useState(hasSavedRoute)
-  const [error, setError] = useState<string | null>(null)
-  const [stops, setStops] = useState<TransitStop[]>([])
+  const [error, setError] = useState(false)
+  const [network, setNetwork] = useState<TransitNetwork>({ stations: [], lineColours: {} })
   const [focus, setFocus] = useState<Point | null>(null)
-  const [areaSettings, setAreaSettings] = useState<AreaSettings>({ enabled: false, minutes: 30, mode: 'public_transport' })
+  const [selection, setSelection] = useState<(RouteSelection & { fitKey: number }) | null>(null)
+  const [areaSettings, setAreaSettings] = useState<AreaSettings>({ enabled: false, mode: 'transit' })
+  const [sheetOpen, setSheetOpen] = useState(true)
   const departureDate = useMemo(() => madridTimeToDate(departure), [departure])
   const reachable = useReachableArea(destinations, departureDate, areaSettings)
   // Only the most recent request may update the results.
   const latestRequest = useRef(0)
+  const scrollbarTimer = useRef<number | undefined>(undefined)
+  const addressLookup = useRef<AbortController | null>(null)
+  const [findingAddress, setFindingAddress] = useState(false)
 
-  const destinationsFull = destinations.length >= maxDestinations
-  const effectiveMode: ClickMode = destinationsFull ? 'home' : clickMode
+  const canAddPlace = destinations.length < maxDestinations
+  // With no places yet, the first click always adds one.
+  const placing = canAddPlace && (addingPlace || destinations.length === 0)
 
   useEffect(() => {
-    void fetchMadridTransitStops().then(setStops)
+    void fetchMadridTransitNetwork().then(setNetwork)
   }, [])
 
   useEffect(() => {
+    saveLang(lang)
+    document.title = t.appName
+  }, [lang, t])
+
+  useEffect(() => {
     try {
-      localStorage.setItem(storageKey, JSON.stringify({ destinations, home } satisfies SavedState))
+      localStorage.setItem(storageKey, JSON.stringify({ destinations, home, homeLabel } satisfies SavedState))
     } catch {
       // Ignore: persistence is a convenience.
     }
-  }, [destinations, home])
+  }, [destinations, home, homeLabel])
 
   async function evaluate(nextHome: Point | null, nextDestinations: Destination[], nextDeparture: string) {
     const requestId = ++latestRequest.current
@@ -111,7 +95,7 @@ function App() {
       return
     }
     setIsLoading(true)
-    setError(null)
+    setError(false)
     try {
       const commuteResults = await calculateCommuteResults(nextHome, nextDestinations, madridTimeToDate(nextDeparture))
       if (requestId === latestRequest.current) {
@@ -121,7 +105,7 @@ function App() {
       console.error(reason)
       if (requestId === latestRequest.current) {
         setResults([])
-        setError('Something went wrong while calculating routes. Please try again.')
+        setError(true)
       }
     } finally {
       if (requestId === latestRequest.current) {
@@ -130,19 +114,30 @@ function App() {
     }
   }
 
+  // Homes saved before addresses were looked up get theirs on load.
+  useEffect(() => {
+    if (!initialState.home || initialState.homeLabel) return
+    const controller = new AbortController()
+    addressLookup.current = controller
+    reverseGeocode(initialState.home, controller.signal)
+      .then((address) => {
+        if (!controller.signal.aborted) setHomeLabel(address)
+      })
+      .catch(() => {})
+    return () => controller.abort()
+  }, [])
+
   // Recalculate saved routes once on load (isLoading starts true in that case).
   useEffect(() => {
     if (!hasSavedRoute) return
     const requestId = ++latestRequest.current
-    calculateCommuteResults(initialState.home!, initialState.destinations, madridTimeToDate(departure))
+    calculateCommuteResults(initialState.home!, initialState.destinations, departureDate)
       .then((commuteResults) => {
         if (requestId === latestRequest.current) setResults(commuteResults)
       })
       .catch((reason: unknown) => {
         console.error(reason)
-        if (requestId === latestRequest.current) {
-          setError('Something went wrong while calculating routes. Please try again.')
-        }
+        if (requestId === latestRequest.current) setError(true)
       })
       .finally(() => {
         if (requestId === latestRequest.current) setIsLoading(false)
@@ -155,28 +150,51 @@ function App() {
     void evaluate(home, nextDestinations, departure)
   }
 
-  function updateHome(nextHome: Point | null) {
-    setHome(nextHome)
-    void evaluate(nextHome, destinations, departure)
-  }
-
-  function placePoint(point: Point, label?: string) {
-    if (effectiveMode === 'home') {
-      updateHome(point)
+  // Names a home placed on the map after its street address. Only the latest lookup counts.
+  function lookUpHomeAddress(point: Point | null) {
+    addressLookup.current?.abort()
+    if (!point) {
+      setFindingAddress(false)
       return
     }
-    const nextDestinations = [
+    const controller = new AbortController()
+    addressLookup.current = controller
+    setFindingAddress(true)
+    reverseGeocode(point, controller.signal)
+      .then((address) => {
+        if (!controller.signal.aborted) setHomeLabel(address)
+      })
+      .catch(() => {
+        // Keep "Point on the map" if the lookup fails.
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setFindingAddress(false)
+      })
+  }
+
+  function updateHome(nextHome: Point | null, label: string | null = null) {
+    setHome(nextHome)
+    setHomeLabel(label)
+    void evaluate(nextHome, destinations, departure)
+    lookUpHomeAddress(label === null ? nextHome : null)
+  }
+
+  function addPlace(point: Point, label?: string) {
+    updateDestinations([
       ...destinations,
-      { id: crypto.randomUUID(), label: label ?? `Destination ${destinations.length + 1}`, location: point },
-    ]
-    updateDestinations(nextDestinations)
-    if (nextDestinations.length >= maxDestinations) {
-      setClickMode('home')
-    }
+      { id: crypto.randomUUID(), label: label || t.defaultPlaceName(destinations.length + 1), location: point },
+    ])
+    setAddingPlace(false)
+  }
+
+  function placePoint(point: Point) {
+    if (placing) addPlace(point)
+    else updateHome(point)
   }
 
   function handleAddressSelect(result: AddressResult) {
-    placePoint(result.location, result.shortLabel)
+    if (placing) addPlace(result.location, result.shortLabel)
+    else updateHome(result.location, result.address || result.shortLabel)
     setFocus(result.location)
   }
 
@@ -186,7 +204,6 @@ function App() {
 
   function removeDestination(id: string) {
     updateDestinations(destinations.filter((d) => d.id !== id))
-    setClickMode('destination')
   }
 
   function renameDestination(id: string, label: string) {
@@ -196,186 +213,196 @@ function App() {
 
   function changeDeparture(value: string) {
     if (!value) return
-    setDeparture(value)
-    void evaluate(home, destinations, value)
+    // Times in the past aren't useful; same-format strings compare chronologically.
+    const now = madridNow()
+    const next = value < now ? now : value
+    setDeparture(next)
+    void evaluate(home, destinations, next)
   }
 
-  function resetAll() {
-    setDestinations([])
-    setClickMode('destination')
-    updateHome(null)
+  function selectRoute(next: RouteSelection) {
+    setSelection((previous) => ({ ...next, fitKey: (previous?.fitKey ?? 0) + 1 }))
   }
+
+  const selectedCommute = selection ? results.find((r) => r.destinationId === selection.destinationId) : undefined
+  const selectedLegs = selection && selectedCommute && !isLoading ? resultFor(selectedCommute, selection.mode).legs : undefined
+  const route: SelectedRoute | null =
+    selection && selectedLegs ? { legs: selectedLegs, fitKey: selection.fitKey } : null
+
+  // Shows the panel's scrollbar only while it is being scrolled (see .panel.scrolling in styles.css).
+  function revealScrollbar(event: UIEvent<HTMLElement>) {
+    const panel = event.currentTarget
+    panel.classList.add('scrolling')
+    window.clearTimeout(scrollbarTimer.current)
+    scrollbarTimer.current = window.setTimeout(() => panel.classList.remove('scrolling'), 900)
+  }
+
+  const searchPlaceholder = placing ? t.enterPlaceAddress : t.enterHomeAddress
 
   return (
-    <main className="app-shell">
-      <header className="top-bar">
-        <div>
-          <h1>Madrid Commute Map</h1>
-          <p>
-            Add up to {maxDestinations} places you travel to regularly, then pick a candidate home to compare
-            driving and public transport times.
-          </p>
-        </div>
-        <label className="departure">
-          Departure (Madrid time)
-          <input type="datetime-local" value={departure} onChange={(event) => changeDeparture(event.target.value)} />
-        </label>
-      </header>
-
-      <div className="toolbar">
-        <div className="mode-toggle" role="radiogroup" aria-label="What a map click places">
-          <button
-            type="button"
-            role="radio"
-            aria-checked={effectiveMode === 'destination'}
-            className={effectiveMode === 'destination' ? 'active' : ''}
-            disabled={destinationsFull}
-            onClick={() => setClickMode('destination')}
-          >
-            Add destination ({destinations.length}/{maxDestinations})
-          </button>
-          <button
-            type="button"
-            role="radio"
-            aria-checked={effectiveMode === 'home'}
-            className={effectiveMode === 'home' ? 'active' : ''}
-            onClick={() => setClickMode('home')}
-          >
-            Set home
-          </button>
-        </div>
-        <AddressSearch
-          placeholder={effectiveMode === 'home' ? 'Search a home address…' : 'Search a destination address…'}
-          onSelect={handleAddressSelect}
+    <I18nContext.Provider value={{ lang, t }}>
+      <main className="app">
+        <MadridMap
+          destinations={destinations}
+          home={home}
+          network={network}
+          focus={focus}
+          route={route}
+          areaBands={reachable.bands}
+          onMapClick={placePoint}
+          onDestinationMove={moveDestination}
+          onHomeMove={(point) => updateHome(point)}
         />
-        <span className="hint">…or click on the map. Drag markers to move them.</span>
-      </div>
 
-      <section className="layout">
-        <div className="map-wrap">
-          <MadridMap
-            destinations={destinations}
-            home={home}
-            transitStops={stops}
-            focus={focus}
-            onMapClick={placePoint}
-            onDestinationMove={moveDestination}
-            onHomeMove={updateHome}
-            reachableArea={reachable.area}
+        <div className="map-overlay-top-right">
+          <ReachableAreaControl
+            settings={areaSettings}
+            destinationCount={destinations.length}
+            loading={reachable.loading}
+            error={reachable.error}
+            empty={reachable.bands !== null && reachable.bands.every((band) => band.shapes.length === 0)}
+            onChange={setAreaSettings}
           />
         </div>
-        <aside className="sidebar">
-          <section className="panel">
-            <div className="panel-header">
-              <h2>Places</h2>
-              <button type="button" onClick={resetAll} disabled={destinations.length === 0 && !home}>
-                Clear all
-              </button>
+
+        <aside className={`panel ${sheetOpen ? 'open' : 'closed'}`} onScroll={revealScrollbar}>
+          <button
+            type="button"
+            className="sheet-handle"
+            aria-label={sheetOpen ? t.collapsePanel : t.expandPanel}
+            onClick={() => setSheetOpen(!sheetOpen)}
+          >
+            {sheetOpen ? <ChevronDown size={18} aria-hidden /> : <ChevronUp size={18} aria-hidden />}
+          </button>
+
+          <header className="panel-header">
+            <div className="panel-title-row">
+              <h1>{t.appName}</h1>
+              <div className="lang-switch" role="group" aria-label={t.switchLanguage}>
+                {(['en', 'es'] as const).map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    lang={option}
+                    aria-pressed={lang === option}
+                    className={lang === option ? 'active' : ''}
+                    onClick={() => setLang(option)}
+                  >
+                    {option.toUpperCase()}
+                  </button>
+                ))}
+              </div>
             </div>
-            {destinations.length === 0 ? <p className="muted">No destinations yet.</p> : null}
+            <p>{t.intro}</p>
+          </header>
+
+          <AddressSearch placeholder={searchPlaceholder} onSelect={handleAddressSelect} />
+
+          <section className="section">
+            <div className="section-head">
+              <h2>{t.yourPlaces}</h2>
+              <span className="muted">
+                {t.placeCount(destinations.length, maxDestinations)}
+              </span>
+            </div>
+            {destinations.length === 0 ? (
+              <p className="muted">{t.placesEmpty(maxDestinations)}</p>
+            ) : null}
             <ol className="place-list">
               {destinations.map((destination, index) => (
                 <li key={destination.id}>
-                  <span className="badge">{index + 1}</span>
+                  <span className="place-badge">{index + 1}</span>
                   <input
-                    aria-label={`Name of destination ${index + 1}`}
+                    aria-label={t.placeNameLabel(index + 1)}
                     value={destination.label}
                     onChange={(event) => renameDestination(destination.id, event.target.value)}
                   />
                   <button
                     type="button"
-                    aria-label={`Remove ${destination.label}`}
+                    className="icon-button"
+                    aria-label={t.remove(destination.label)}
                     onClick={() => removeDestination(destination.id)}
                   >
-                    ✕
+                    <X size={16} aria-hidden />
                   </button>
                 </li>
               ))}
             </ol>
-            <div className="home-row">
-              <span className="badge badge-home">⌂</span>
-              <span>{home ? 'Home selected' : 'No home selected'}</span>
-              {home ? (
-                <button type="button" onClick={() => updateHome(null)}>
-                  Clear
-                </button>
-              ) : null}
-            </div>
+            {placing ? (
+              <div className="placing-hint">
+                <MapPin size={16} aria-hidden />
+                <span>{t.clickMapOrSearch}</span>
+                {destinations.length > 0 ? (
+                  <button type="button" className="link-button" onClick={() => setAddingPlace(false)}>
+                    {t.cancel}
+                  </button>
+                ) : null}
+              </div>
+            ) : canAddPlace ? (
+              <button type="button" className="add-button" onClick={() => setAddingPlace(true)}>
+                <Plus size={16} aria-hidden /> {t.addPlace}
+              </button>
+            ) : null}
           </section>
-          <ResultsPanel
-            loading={isLoading}
-            error={error}
-            results={results}
-            destinations={destinations}
-            home={home}
-          />
-          <section className="panel">
-            <div className="panel-header">
-              <h2>Reachable area</h2>
-              <label className="switch">
-                <input
-                  type="checkbox"
-                  checked={areaSettings.enabled}
-                  onChange={(event) => setAreaSettings({ ...areaSettings, enabled: event.target.checked })}
-                />
-                Show
-              </label>
+
+          <section className="section">
+            <div className="section-head">
+              <h2>{t.home}</h2>
             </div>
-            <p className="muted">
-              Shows every place you could live and still reach all your destinations within the chosen time, leaving at
-              the departure time.
-            </p>
-            <div className="area-controls">
-              <span>Within</span>
-              <select
-                aria-label="Maximum travel time"
-                value={areaSettings.minutes}
-                onChange={(event) => setAreaSettings({ ...areaSettings, minutes: Number(event.target.value) })}
-              >
-                {[15, 20, 30, 45, 60].map((minutes) => (
-                  <option key={minutes} value={minutes}>
-                    {minutes} min
-                  </option>
-                ))}
-              </select>
-              <span>by</span>
-              <select
-                aria-label="Travel mode"
-                value={areaSettings.mode}
-                onChange={(event) =>
-                  setAreaSettings({ ...areaSettings, mode: event.target.value as AreaSettings['mode'] })
-                }
-              >
-                <option value="public_transport">public transport</option>
-                <option value="driving">car</option>
-              </select>
-            </div>
-            {!areaSettings.enabled ? null : destinations.length === 0 ? (
-              <p className="muted">Add a destination first.</p>
-            ) : reachable.error ? (
-              <p className="error-text">{reachable.error}</p>
-            ) : reachable.loading ? (
-              <p className="muted">Calculating area…</p>
-            ) : reachable.area && reachable.area.length === 0 ? (
-              <p className="muted">
-                No place reaches {destinations.length > 1 ? 'all destinations' : 'this destination'} in time. Try a
-                longer time.
-              </p>
+            {home ? (
+              <div className="home-row">
+                <span className="home-badge">
+                  <House size={15} aria-hidden />
+                </span>
+                <span className="home-label">{homeLabel ?? (findingAddress ? t.findingAddress : t.pointOnMap)}</span>
+                <button type="button" className="icon-button" aria-label={t.clearHome} onClick={() => updateHome(null)}>
+                  <X size={16} aria-hidden />
+                </button>
+              </div>
             ) : (
               <p className="muted">
-                <i className="legend-swatch" /> Green: {destinations.length > 1 ? 'every destination' : 'the destination'}{' '}
-                within {areaSettings.minutes} min.
+                {destinations.length === 0 ? t.homeNeedsPlace : t.homeEmpty}
               </p>
             )}
+            <label className="departure">
+              <Clock size={15} aria-hidden />
+              <span>{t.leavingAt}</span>
+              <input
+                type="datetime-local"
+                value={departure}
+                min={madridNow()}
+                onChange={(event) => changeDeparture(event.target.value)}
+              />
+              <button type="button" className="link-button" onClick={() => changeDeparture(madridNow())}>
+                {t.now}
+              </button>
+            </label>
           </section>
-        </aside>
-      </section>
 
-      <footer className="footer">
-        Map data © OpenStreetMap contributors. Travel times: TravelTime. Address search:
-        Photon.
-      </footer>
-    </main>
+          {home && destinations.length > 0 ? (
+            <section className="section">
+              <div className="section-head">
+                <h2>{t.travelTimes}</h2>
+              </div>
+              <ResultsTable
+                loading={isLoading}
+                error={error}
+                results={results}
+                destinations={destinations}
+                home={home}
+                selection={selection}
+                lineColours={network.lineColours}
+                onSelect={selectRoute}
+              />
+            </section>
+          ) : null}
+
+          <footer className="panel-footer">
+            {t.footer}
+          </footer>
+        </aside>
+      </main>
+    </I18nContext.Provider>
   )
 }
 

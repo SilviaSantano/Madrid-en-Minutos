@@ -1,18 +1,17 @@
 import { useEffect, useState } from 'react'
-import type { Destination } from '../types/commute'
-import { fetchReachableArea, type AreaShape } from './reachability'
-import { describeTravelTimeError, type TravelTimeMode } from './traveltime'
+import type { Destination, RoutingErrorCode, TravelMode } from '../types/commute'
+import { fetchReachableArea, type AreaBand } from './reachability'
+import { travelTimeErrorCode } from './traveltime'
 
 export type AreaSettings = {
   enabled: boolean
-  minutes: number
-  mode: TravelTimeMode
+  mode: TravelMode
 }
 
 type Fetched = {
   key: string
-  area: AreaShape[] | null
-  error: string | null
+  bands: AreaBand[] | null
+  error: RoutingErrorCode | null
 }
 
 // Fetches the reachable area whenever the destinations, departure or settings change.
@@ -23,7 +22,6 @@ export function useReachableArea(destinations: Destination[], departure: Date, s
   const key = JSON.stringify([
     destinations.map((destination) => [destination.id, destination.location]),
     departure.toISOString(),
-    settings.minutes,
     settings.mode,
   ])
 
@@ -32,12 +30,12 @@ export function useReachableArea(destinations: Destination[], departure: Date, s
     let cancelled = false
     // Wait briefly so dragging a marker or changing several settings sends one request.
     const timer = window.setTimeout(() => {
-      fetchReachableArea(destinations, departure, settings.minutes, settings.mode)
-        .then((area) => {
-          if (!cancelled) setFetched({ key, area, error: null })
+      fetchReachableArea(destinations, departure, settings.mode === 'transit' ? 'public_transport' : settings.mode)
+        .then((bands) => {
+          if (!cancelled) setFetched({ key, bands, error: null })
         })
         .catch((reason: unknown) => {
-          if (!cancelled) setFetched({ key, area: null, error: describeTravelTimeError(reason) })
+          if (!cancelled) setFetched({ key, bands: null, error: travelTimeErrorCode(reason) })
         })
     }, 400)
     return () => {
@@ -51,7 +49,7 @@ export function useReachableArea(destinations: Destination[], departure: Date, s
   const current = active && fetched?.key === key ? fetched : null
   return {
     // Keep showing the previous area while a new one loads, to avoid flicker.
-    area: active ? (fetched?.area ?? null) : null,
+    bands: active ? (fetched?.bands ?? null) : null,
     error: current?.error ?? null,
     loading: active && current === null,
   }

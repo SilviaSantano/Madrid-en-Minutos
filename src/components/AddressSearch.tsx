@@ -1,58 +1,15 @@
 import { useEffect, useState } from 'react'
-import type { Point } from '../types/commute'
-
-export type AddressResult = {
-  id: string
-  label: string
-  shortLabel: string
-  location: Point
-}
-
-type PhotonResponse = {
-  features: Array<{
-    geometry: { coordinates: [number, number] }
-    properties: {
-      osm_id?: number
-      name?: string
-      street?: string
-      housenumber?: string
-      postcode?: string
-      district?: string
-      city?: string
-    }
-  }>
-}
+import { Search } from 'lucide-react'
+import { useI18n } from '../i18n'
+import { searchAddress, type AddressResult } from '../lib/geocoding'
 
 type AddressSearchProps = {
   placeholder: string
   onSelect: (result: AddressResult) => void
 }
 
-// Photon (https://photon.komoot.io) is a free OpenStreetMap geocoder. Results are biased to Madrid.
-async function searchAddress(text: string, signal: AbortSignal): Promise<AddressResult[]> {
-  const params = new URLSearchParams({
-    q: text,
-    lat: '40.4168',
-    lon: '-3.7038',
-    bbox: '-4.2,40.0,-3.3,40.8',
-    limit: '6',
-  })
-  const response = await fetch(`https://photon.komoot.io/api/?${params}`, { signal })
-  if (!response.ok) {
-    return []
-  }
-  const data = (await response.json()) as PhotonResponse
-  return data.features.map((feature, index) => {
-    const p = feature.properties
-    const street = [p.street, p.housenumber].filter(Boolean).join(' ')
-    const shortLabel = p.name ?? (street || p.district || p.city || 'Selected place')
-    const label = [p.name, street, p.district, p.city].filter(Boolean).join(', ')
-    const [lng, lat] = feature.geometry.coordinates
-    return { id: `${p.osm_id ?? 'x'}-${index}`, label, shortLabel, location: { lat, lng } }
-  })
-}
-
 export function AddressSearch({ placeholder, onSelect }: AddressSearchProps) {
+  const { t } = useI18n()
   const [text, setText] = useState('')
   const [results, setResults] = useState<AddressResult[]>([])
   const [error, setError] = useState(false)
@@ -92,7 +49,9 @@ export function AddressSearch({ placeholder, onSelect }: AddressSearchProps) {
 
   return (
     <div className="address-search">
+      <Search className="address-search-icon" size={17} aria-hidden />
       <input
+        aria-label={placeholder}
         type="search"
         value={text}
         placeholder={placeholder}
@@ -104,7 +63,7 @@ export function AddressSearch({ placeholder, onSelect }: AddressSearchProps) {
       />
       {showResults && (results.length > 0 || error) ? (
         <ul className="address-results">
-          {error ? <li className="address-empty">Search is unavailable right now.</li> : null}
+          {error ? <li className="address-empty">{t.searchUnavailable}</li> : null}
           {results.map((result) => (
             <li key={result.id}>
               <button type="button" onClick={() => choose(result)}>

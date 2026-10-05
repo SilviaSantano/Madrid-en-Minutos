@@ -1,3 +1,5 @@
+import type { RoutingErrorCode } from '../types/commute'
+
 // Shared client for the TravelTime API (https://traveltime.com). Public transport covers
 // Metro, EMT, Cercanías, interurban buses and Metro Ligero.
 const baseUrl = 'https://api.traveltimeapp.com/v4'
@@ -7,12 +9,19 @@ const requestTimeoutMs = 30000
 
 export type TravelTimeMode = 'public_transport' | 'driving' | 'walking'
 
-// An error whose message is already suitable to show to the user.
-export class TravelTimeError extends Error {}
+// A failure with a known cause, so the UI can explain it.
+export class TravelTimeError extends Error {
+  readonly code: RoutingErrorCode
+
+  constructor(code: RoutingErrorCode, detail?: string) {
+    super(detail ?? code)
+    this.code = code
+  }
+}
 
 export async function postTravelTime<T>(path: string, body: unknown): Promise<T> {
   if (!appId || !apiKey) {
-    throw new TravelTimeError('TravelTime API key missing. Set VITE_TRAVELTIME_APP_ID and VITE_TRAVELTIME_API_KEY in .env.')
+    throw new TravelTimeError('keyMissing')
   }
   const response = await fetch(`${baseUrl}${path}`, {
     method: 'POST',
@@ -27,24 +36,23 @@ export async function postTravelTime<T>(path: string, body: unknown): Promise<T>
   const data = (await response.json().catch(() => ({}))) as T & { description?: string }
   if (!response.ok) {
     if (response.status === 401 || response.status === 403) {
-      throw new TravelTimeError(
-        'The TravelTime API key was rejected. Check VITE_TRAVELTIME_APP_ID and VITE_TRAVELTIME_API_KEY.',
-      )
+      throw new TravelTimeError('keyRejected')
     }
     if (response.status === 429) {
-      throw new TravelTimeError('Too many requests to TravelTime. Wait a minute and try again.')
+      throw new TravelTimeError('rateLimited')
     }
-    throw new TravelTimeError(data.description ?? `TravelTime error (HTTP ${response.status}).`)
+    throw new TravelTimeError('service', data.description ?? `HTTP ${response.status}`)
   }
   return data
 }
 
-export function describeTravelTimeError(error: unknown): string {
+export function travelTimeErrorCode(error: unknown): RoutingErrorCode {
   if (error instanceof DOMException && error.name === 'TimeoutError') {
-    return 'The routing service took too long to answer.'
+    return 'timeout'
   }
   if (error instanceof TravelTimeError) {
-    return error.message
+    if (error.code === 'service') console.warn('TravelTime error:', error.message)
+    return error.code
   }
-  return 'Could not reach the routing service. Check your connection and try again.'
+  return 'network'
 }

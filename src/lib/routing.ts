@@ -1,5 +1,5 @@
-import type { Destination, DestinationCommute, Point, TravelModeResult } from '../types/commute'
-import { describeTravelTimeError, postTravelTime, type TravelTimeMode } from './traveltime'
+import type { Destination, DestinationCommute, Point, RouteLeg, RoutingErrorCode, TravelModeResult } from '../types/commute'
+import { travelTimeErrorCode, postTravelTime, type TravelTimeMode } from './traveltime'
 
 type RoutePart = {
   type: string
@@ -38,7 +38,7 @@ function formatMeters(meters: number): string {
   return `${(meters / 1000).toFixed(1)} km`
 }
 
-function failure(error: string): TravelModeResult {
+function failure(error: RoutingErrorCode): TravelModeResult {
   return {
     durationText: '-',
     durationValueSeconds: 0,
@@ -78,6 +78,7 @@ function rideLabel(part: RoutePart): string {
     case 'coach':
       return `Bus ${line}`.trim()
     case 'tram':
+    case 'light_rail':
       return `Metro Ligero ${line}`.trim()
     case 'rail_overground':
     case 'rail_national':
@@ -101,25 +102,28 @@ function toResult(
     durationValueSeconds: property.travel_time,
     distanceText: distance > 0 ? formatMeters(distance) : '-',
     distanceValueMeters: distance,
-    summary: mode === 'public_transport' ? (rides.length > 0 ? rides.map(rideLabel).join(' → ') : 'Walk') : undefined,
+    rides: mode === 'public_transport' ? rides.map(rideLabel) : undefined,
+    legs: parts.map((part): RouteLeg => {
+      if (part.type === 'public_transport') return { kind: 'ride', path: part.coords ?? [], ride: rideLabel(part) }
+      return { kind: part.mode === 'walk' ? 'walk' : 'drive', path: part.coords ?? [] }
+    }),
   }
 }
 
-const noRouteMessage: Record<TravelTimeMode, string> = {
-  public_transport: 'No public transport route found for this time.',
-  driving: 'No driving route found.',
-  walking: 'No walking route found.',
-}
-
 async function requestRoutes(home: Point, destinations: Destination[], departure: Date): Promise<RoutesResponse> {
-  // The free plan allows at most 2 arrivals per search, so use one search per mode and destination.
+  // The free plan allows at most 2 arrivals per search and 10 searches per request, so pair
+  // up destinations: 4 places × 3 modes fit in 6 searches.
+  const pairs: Destination[][] = []
+  for (let i = 0; i < destinations.length; i += 2) {
+    pairs.push(destinations.slice(i, i + 2))
+  }
   const searches = (['public_transport', 'driving', 'walking'] as const).flatMap((mode) =>
-    destinations.map((destination) => ({
-      id: `${mode}:${destination.id}`,
+    pairs.map((pair, index) => ({
+      id: `${mode}:${index}`,
       departure_location_id: 'home',
-      arrival_location_ids: [destination.id],
+      arrival_location_ids: pair.map((destination) => destination.id),
       departure_time: departure.toISOString(),
-      properties: mode === 'public_transport' ? ['travel_time', 'route'] : ['travel_time', 'distance'],
+      properties: mode === 'public_transport' ? ['travel_time', 'route'] : ['travel_time', 'distance', 'route'],
       transportation: { type: mode },
     })),
   )
@@ -141,21 +145,23 @@ export async function calculateCommuteResults(
   try {
     data = await requestRoutes(home, destinations, departure)
   } catch (error) {
-    const message = describeTravelTimeError(error)
+    const code = travelTimeErrorCode(error)
     return destinations.map((destination) => ({
       destinationId: destination.id,
       destinationLabel: destination.label,
-      driving: failure(message),
-      transit: failure(message),
-      walking: failure(message),
+      driving: failure(code),
+      transit: failure(code),
+      walking: failure(code),
     }))
   }
 
   const resultFor = (mode: TravelTimeMode, destinationId: string): TravelModeResult => {
-    const search = data.results?.find((result) => result.search_id === `${mode}:${destinationId}`)
-    const property = search?.locations.find((location) => location.id === destinationId)?.properties[0]
+    const property = data.results
+      ?.filter((result) => result.search_id.startsWith(`${mode}:`))
+      .flatMap((result) => result.locations)
+      .find((location) => location.id === destinationId)?.properties[0]
     if (!property) {
-      return failure(noRouteMessage[mode])
+      return failure('noRoute')
     }
     return toResult(mode, property)
   }
