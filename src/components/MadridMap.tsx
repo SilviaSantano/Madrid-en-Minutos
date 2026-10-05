@@ -18,7 +18,8 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import type { AreaBand, AreaShape } from '../lib/reachability'
 import { lineRefForRide } from '../lib/stops'
-import type { Destination, Point, RouteLeg, TransitNetwork } from '../types/commute'
+import { homeLetter } from '../lib/homes'
+import type { Destination, Point, RouteLeg, SavedHome, TransitNetwork } from '../types/commute'
 import { LineChip } from './LineChip'
 
 export type SelectedRoute = {
@@ -37,6 +38,8 @@ type MadridMapProps = {
   onMapClick: (point: Point) => void
   onDestinationMove: (id: string, point: Point) => void
   onHomeMove: (point: Point) => void
+  savedHomes: SavedHome[]
+  onSavedHomeClick: (home: SavedHome) => void
 }
 
 // MapLibre loads its worker relative to its own file, which breaks once Vite bundles it,
@@ -59,6 +62,15 @@ const homeIcon = new L.DivIcon({
   iconAnchor: [17, 17],
   popupAnchor: [0, -17],
 })
+
+function savedHomeIcon(index: number) {
+  return new L.DivIcon({
+    className: 'pin pin-saved',
+    html: `<span>${homeLetter(index)}</span>`,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+  })
+}
 
 function destinationIcon(index: number) {
   return new L.DivIcon({
@@ -186,10 +198,16 @@ export function MadridMap({
   onMapClick,
   onDestinationMove,
   onHomeMove,
+  savedHomes,
+  onSavedHomeClick,
 }: MadridMapProps) {
   const destinationIcons = useMemo(
     () => Array.from({ length: destinations.length }, (_, index) => destinationIcon(index)),
     [destinations.length],
+  )
+  const savedHomeIcons = useMemo(
+    () => Array.from({ length: savedHomes.length }, (_, index) => savedHomeIcon(index)),
+    [savedHomes.length],
   )
   const [zoom, setZoom] = useState(12)
 
@@ -295,6 +313,19 @@ export function MadridMap({
             </CircleMarker>
           ))
         : null}
+
+      {/* Saved homes other than the one on show; click one to show it. */}
+      {savedHomes.map((saved, index) =>
+        home && saved.location.lat === home.lat && saved.location.lng === home.lng ? null : (
+          <Marker
+            key={saved.id}
+            position={saved.location}
+            icon={savedHomeIcons[index]}
+            title={saved.label ?? undefined}
+            eventHandlers={{ click: () => onSavedHomeClick(saved) }}
+          />
+        ),
+      )}
 
       {home ? (
         <Marker

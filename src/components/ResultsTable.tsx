@@ -1,6 +1,7 @@
 import { ExternalLink } from 'lucide-react'
 import { useI18n } from '../i18n'
 import { modes, resultFor } from '../lib/modes'
+import { compactDuration, speedClass } from '../lib/format'
 import { areaBands } from '../lib/reachability'
 import { lineRefForRide } from '../lib/stops'
 import type { Destination, DestinationCommute, Point, TravelMode } from '../types/commute'
@@ -20,22 +21,6 @@ type ResultsTableProps = {
   selection: RouteSelection | null
   lineColours: Record<string, string>
   onSelect: (selection: RouteSelection) => void
-}
-
-// Short form for the table cells: "13 min", "1h 46m".
-function compactDuration(seconds: number): string {
-  const minutes = Math.round(seconds / 60)
-  if (minutes < 60) return `${minutes} min`
-  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`
-}
-
-// Same steps and colours as the reachable-area bands: green up to 15 min, yellow up to 30,
-// orange up to 45, red beyond.
-// Uses the rounded minutes shown in the cell, so "15 min" is always green.
-function speedClass(seconds: number): string {
-  const shown = Math.round(seconds / 60)
-  const band = areaBands.findIndex((minutes) => shown <= minutes)
-  return band === -1 ? 'beyond' : `band-${band}`
 }
 
 // Opens the same trip in Google Maps, to see the full step-by-step itinerary.

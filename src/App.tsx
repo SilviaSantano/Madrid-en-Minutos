@@ -2,16 +2,20 @@ import { useEffect, useMemo, useRef, useState, type UIEvent } from 'react'
 import { ChevronDown, ChevronUp, Clock, House, MapPin, Plus, X } from 'lucide-react'
 import { I18nContext, initialLang, messages, saveLang, type Lang } from './i18n'
 import { AddressSearch } from './components/AddressSearch'
+import { CompareHomes } from './components/CompareHomes'
 import { MadridMap, type SelectedRoute } from './components/MadridMap'
+import { NearbyStations } from './components/NearbyStations'
 import { ReachableAreaControl } from './components/ReachableAreaControl'
 import { ResultsTable, type RouteSelection } from './components/ResultsTable'
 import { reverseGeocode, type AddressResult } from './lib/geocoding'
+import { maxSavedHomes } from './lib/homes'
 import { resultFor } from './lib/modes'
 import { calculateCommuteResults } from './lib/routing'
 import { fetchMadridTransitNetwork } from './lib/stops'
 import { madridNow, madridTimeToDate } from './lib/time'
+import { useComparison } from './lib/useComparison'
 import { useReachableArea, type AreaSettings } from './lib/useReachableArea'
-import type { Destination, DestinationCommute, Point, TransitNetwork } from './types/commute'
+import type { Destination, DestinationCommute, Point, SavedHome, TransitNetwork } from './types/commute'
 
 const maxDestinations = 4
 const storageKey = 'madrid-commute-map:v1'
@@ -21,6 +25,7 @@ type SavedState = {
   home: Point | null
   // Null when the home was placed by clicking the map.
   homeLabel?: string | null
+  savedHomes?: SavedHome[]
 }
 
 function loadSavedState(): SavedState {
@@ -30,12 +35,21 @@ function loadSavedState(): SavedState {
       const parsed = JSON.parse(raw) as SavedState
       // Older saves stored the English placeholder; treat it as "placed on the map".
       const homeLabel = parsed.homeLabel === 'Point on the map' ? null : (parsed.homeLabel ?? null)
-      return { destinations: parsed.destinations ?? [], home: parsed.home ?? null, homeLabel }
+      return {
+        destinations: parsed.destinations ?? [],
+        home: parsed.home ?? null,
+        homeLabel,
+        savedHomes: parsed.savedHomes ?? [],
+      }
     }
   } catch {
     // Storage unavailable or corrupt: start empty.
   }
-  return { destinations: [], home: null }
+  return { destinations: [], home: null, savedHomes: [] }
+}
+
+function samePoint(a: Point, b: Point): boolean {
+  return a.lat === b.lat && a.lng === b.lng
 }
 
 const initialState = loadSavedState()
@@ -60,6 +74,8 @@ function App() {
   const [sheetOpen, setSheetOpen] = useState(true)
   const departureDate = useMemo(() => madridTimeToDate(departure), [departure])
   const reachable = useReachableArea(destinations, departureDate, areaSettings)
+  const [savedHomes, setSavedHomes] = useState<SavedHome[]>(initialState.savedHomes ?? [])
+  const comparison = useComparison(savedHomes, destinations, departureDate)
   // Only the most recent request may update the results.
   const latestRequest = useRef(0)
   const scrollbarTimer = useRef<number | undefined>(undefined)
@@ -81,11 +97,14 @@ function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem(storageKey, JSON.stringify({ destinations, home, homeLabel } satisfies SavedState))
+      localStorage.setItem(
+        storageKey,
+        JSON.stringify({ destinations, home, homeLabel, savedHomes } satisfies SavedState),
+      )
     } catch {
       // Ignore: persistence is a convenience.
     }
-  }, [destinations, home, homeLabel])
+  }, [destinations, home, homeLabel, savedHomes])
 
   async function evaluate(nextHome: Point | null, nextDestinations: Destination[], nextDeparture: string) {
     const requestId = ++latestRequest.current
@@ -162,7 +181,12 @@ function App() {
     setFindingAddress(true)
     reverseGeocode(point, controller.signal)
       .then((address) => {
-        if (!controller.signal.aborted) setHomeLabel(address)
+        if (controller.signal.aborted) return
+        setHomeLabel(address)
+        // The home may have been saved before its address arrived.
+        setSavedHomes((previous) =>
+          previous.map((saved) => (saved.label === null && samePoint(saved.location, point) ? { ...saved, label: address } : saved)),
+        )
       })
       .catch(() => {
         // Keep "Point on the map" if the lookup fails.
@@ -237,6 +261,18 @@ function App() {
     scrollbarTimer.current = window.setTimeout(() => panel.classList.remove('scrolling'), 900)
   }
 
+  const currentIsSaved = home !== null && savedHomes.some((saved) => samePoint(saved.location, home))
+
+  function saveCurrentHome() {
+    if (!home || currentIsSaved || savedHomes.length >= maxSavedHomes) return
+    setSavedHomes([...savedHomes, { id: crypto.randomUUID(), location: home, label: homeLabel }])
+  }
+
+  function showSavedHome(saved: SavedHome) {
+    if (!home || !samePoint(home, saved.location)) updateHome(saved.location, saved.label)
+    setFocus(saved.location)
+  }
+
   const searchPlaceholder = placing ? t.enterPlaceAddress : t.enterHomeAddress
 
   return (
@@ -252,6 +288,8 @@ function App() {
           onMapClick={placePoint}
           onDestinationMove={moveDestination}
           onHomeMove={(point) => updateHome(point)}
+          savedHomes={savedHomes}
+          onSavedHomeClick={showSavedHome}
         />
 
         <div className="map-overlay-top-right">
@@ -350,19 +388,25 @@ function App() {
               <h2>{t.home}</h2>
             </div>
             {home ? (
-              <div className="home-row">
-                <span className="home-badge">
-                  <House size={15} aria-hidden />
-                </span>
-                <span className="home-label">{homeLabel ?? (findingAddress ? t.findingAddress : t.pointOnMap)}</span>
-                <button type="button" className="icon-button" aria-label={t.clearHome} onClick={() => updateHome(null)}>
-                  <X size={16} aria-hidden />
-                </button>
-              </div>
+              <>
+                <div className="home-row">
+                  <span className="home-badge">
+                    <House size={15} aria-hidden />
+                  </span>
+                  <span className="home-label">{homeLabel ?? (findingAddress ? t.findingAddress : t.pointOnMap)}</span>
+                  <button
+                    type="button"
+                    className="icon-button"
+                    aria-label={t.clearHome}
+                    onClick={() => updateHome(null)}
+                  >
+                    <X size={16} aria-hidden />
+                  </button>
+                </div>
+                <NearbyStations home={home} network={network} />
+              </>
             ) : (
-              <p className="muted">
-                {destinations.length === 0 ? t.homeNeedsPlace : t.homeEmpty}
-              </p>
+              <p className="muted">{destinations.length === 0 ? t.homeNeedsPlace : t.homeEmpty}</p>
             )}
             <label className="departure">
               <Clock size={15} aria-hidden />
@@ -393,6 +437,26 @@ function App() {
                 selection={selection}
                 lineColours={network.lineColours}
                 onSelect={selectRoute}
+              />
+            </section>
+          ) : null}
+
+          {destinations.length > 0 ? (
+            <section className="section">
+              <div className="section-head">
+                <h2>{t.compareHomes}</h2>
+                <span className="muted">{t.placeCount(savedHomes.length, maxSavedHomes)}</span>
+              </div>
+              <CompareHomes
+                savedHomes={savedHomes}
+                destinations={destinations}
+                results={comparison.results}
+                loading={comparison.loading}
+                currentHome={home}
+                currentIsSaved={currentIsSaved}
+                onSave={saveCurrentHome}
+                onRemove={(id) => setSavedHomes(savedHomes.filter((saved) => saved.id !== id))}
+                onShow={showSavedHome}
               />
             </section>
           ) : null}

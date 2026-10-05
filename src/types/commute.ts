@@ -22,6 +22,14 @@ export type TravelModeResult = {
   error?: RoutingErrorCode
 }
 
+// A candidate home kept for side-by-side comparison.
+export type SavedHome = {
+  id: string
+  location: Point
+  // Street address; null if it was placed on the map and no address was found.
+  label: string | null
+}
+
 export type DestinationCommute = {
   destinationId: string
   destinationLabel: string

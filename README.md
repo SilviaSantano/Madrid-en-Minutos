@@ -7,7 +7,9 @@ Compare commutes from a candidate home in Madrid to up to 4 places you travel to
 1. Add up to 4 places you travel to often: the first click on the map adds one, then use **Add place** for more. You can also search an address.
 2. Click the map or search an address to try a home; it's labelled with its street address (looked up with Photon). Drag markers to compare nearby spots, and change **Leaving at** to test another time of day.
 3. The table shows public transport, car and walking times to each place: green up to 20 min, amber up to 40, red beyond, with the fastest outlined. Tap a time to draw that route on the map.
-4. Turn on **Reachable area** (top right) to shade everywhere you could live and still reach *every* place within 15, 30 and 45 min, by the mode you choose.
+4. Under **Home**, see the nearest Metro, Metro Ligero and Cercanías stations with their lines and an estimated walk (straight-line distance plus 25%, at 80 m/min).
+5. **Save this home** to compare up to 3 candidate homes (A, B, C) side by side: one column per home, a row per place and the total one-way time, for the travel mode you pick. The shortest total is outlined. Click a saved home (in the list, the table header or its map marker) to show it again.
+6. Turn on **Reachable area** (top right) to shade everywhere you could live and still reach *every* place within 15, 30 and 45 min, by the mode you choose.
 
 Metro, Metro Ligero and Cercanías stations appear in their line colours when you zoom in.
 

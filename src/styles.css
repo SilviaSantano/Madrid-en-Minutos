@@ -627,6 +627,140 @@ button:disabled {
   text-align: center;
 }
 
+/* Nearby stations */
+
+.nearby h3 {
+  margin: 0 0 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.nearby ul {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nearby li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nearby .chips {
+  flex: none;
+}
+
+.nearby-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nearby-walk {
+  flex: none;
+  color: var(--ink-2);
+  font-size: 0.82rem;
+}
+
+/* Compare homes */
+
+.compare {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.saved-homes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.saved-homes li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.home-letter {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.saved-home-label {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  font-weight: 500;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.saved-home-label:hover {
+  background: var(--surface-2);
+}
+
+.compare-table thead th button.home-letter {
+  margin: 0 auto;
+}
+
+.compare-table .time-cell {
+  min-height: 30px;
+  padding: 4px;
+}
+
+.total-row th,
+.total-row td {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.total-row th {
+  color: var(--ink-2);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.total-cell {
+  display: block;
+  padding: 5px 4px;
+  border: 2px solid transparent;
+  border-radius: 9px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.total-cell.best {
+  border-color: var(--band-0);
+  color: var(--band-0-text);
+}
+
 /* Map overlays */
 
 .map-overlay-top-right {
@@ -759,6 +893,13 @@ button:disabled {
 
 .pin-place {
   background: var(--accent);
+}
+
+.pin-saved {
+  background: #ffffff;
+  border-color: var(--ink);
+  color: var(--ink);
+  font-size: 0.8rem;
 }
 
 .pin-home {

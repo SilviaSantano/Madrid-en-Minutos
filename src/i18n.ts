@@ -6,7 +6,7 @@ export type Lang = 'en' | 'es'
 const en = {
   appName: 'Madrid en Minutos',
   intro:
-    'Choose where to live by checking how long it really takes to reach the places you go to from the new home.',
+    'Thinking of moving? See how long it really takes to reach the places you go to from each home by car, public transport and walking, and then compare them side by side to choose where to live.',
   switchLanguage: 'Cambiar a español',
   expandPanel: 'Expand panel',
   collapsePanel: 'Collapse panel',
@@ -31,6 +31,9 @@ const en = {
   clearHome: 'Clear home',
   homeNeedsPlace: 'Add a place first, then try a home.',
   homeEmpty: 'Click the map or search an address to try a home.',
+  nearbyStations: 'Nearby stations',
+  noStationsNearby: 'No Metro or Cercanías station within 1 km.',
+  walkMinutes: (minutes: number) => `~${minutes} min walk`,
   leavingAt: 'Leaving at',
   now: 'Now',
 
@@ -46,6 +49,14 @@ const en = {
   colourKey: 'Colour key',
   more: 'more',
   genericError: 'Something went wrong while calculating routes. Please try again.',
+
+  compareHomes: 'Compare homes',
+  compareEmpty: 'Save homes you like to compare their travel times side by side.',
+  saveHome: 'Save this home',
+  showOnMap: 'Show on map',
+  removeHome: (name: string) => `Remove ${name}`,
+  totalOneWay: 'Total, one way',
+  bestHomeHint: 'Outlined: the shortest total.',
 
   reachableArea: 'Reachable area',
   hideReachableArea: 'Hide reachable area',
@@ -86,7 +97,7 @@ export type Messages = typeof en
 const es: Messages = {
   appName: 'Madrid en Minutos',
   intro:
-    'Elige dónde vivir comprobando cuánto se tarda de verdad en llegar desde tu nueva casa a los sitios a los que vas.',
+    '¿Piensas mudarte? Mira cuánto tardas de verdad en llegar a tus lugares desde cada casa en coche, en transporte público y a pie, y después compáralas para elegir dónde vivir.',
   switchLanguage: 'Switch to English',
   expandPanel: 'Expandir panel',
   collapsePanel: 'Contraer panel',
@@ -111,6 +122,9 @@ const es: Messages = {
   clearHome: 'Quitar casa',
   homeNeedsPlace: 'Añade primero un lugar y luego prueba una casa.',
   homeEmpty: 'Haz clic en el mapa o busca una dirección para probar una casa.',
+  nearbyStations: 'Estaciones cercanas',
+  noStationsNearby: 'Ninguna estación de Metro o Cercanías a menos de 1 km.',
+  walkMinutes: (minutes) => `~${minutes} min a pie`,
   leavingAt: 'Salida',
   now: 'Ahora',
 
@@ -126,6 +140,14 @@ const es: Messages = {
   colourKey: 'Leyenda',
   more: 'más',
   genericError: 'Algo ha fallado al calcular las rutas. Vuelve a intentarlo.',
+
+  compareHomes: 'Comparar casas',
+  compareEmpty: 'Guarda las casas que te gusten para comparar sus tiempos de viaje.',
+  saveHome: 'Guardar esta casa',
+  showOnMap: 'Ver en el mapa',
+  removeHome: (name) => `Quitar ${name}`,
+  totalOneWay: 'Total, solo ida',
+  bestHomeHint: 'Con borde: el menor total.',
 
   reachableArea: 'Zona alcanzable',
   hideReachableArea: 'Ocultar zona alcanzable',

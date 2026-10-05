@@ -1,4 +1,5 @@
 import type { Destination, DestinationCommute, Point, RouteLeg, RoutingErrorCode, TravelModeResult } from '../types/commute'
+import { haversineMeters } from './geo'
 import { travelTimeErrorCode, postTravelTime, type TravelTimeMode } from './traveltime'
 
 type RoutePart = {
@@ -48,14 +49,6 @@ function failure(error: RoutingErrorCode): TravelModeResult {
   }
 }
 
-function haversineMeters(a: Point, b: Point): number {
-  const toRad = (deg: number) => (deg * Math.PI) / 180
-  const dLat = toRad(b.lat - a.lat)
-  const dLng = toRad(b.lng - a.lng)
-  const h =
-    Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2
-  return 2 * 6371000 * Math.asin(Math.sqrt(h))
-}
 
 // Ride legs report distance 0, so measure them along their coordinates instead.
 function partDistance(part: RoutePart): number {
